@@ -1,0 +1,5 @@
+#!/bin/sh
+#
+# Tell how long the system has been running.
+#
+uptime

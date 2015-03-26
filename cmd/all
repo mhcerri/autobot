@@ -1,0 +1,11 @@
+#!/bin/sh
+#
+# List all commands available.
+#
+IFS='
+'
+cd "$(dirname "$0")"
+find . -type f -a -executable |
+while read F; do
+    echo "$F" | sed -e 's/\.\///g'
+done | sort

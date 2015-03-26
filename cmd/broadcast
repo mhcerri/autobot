@@ -1,0 +1,5 @@
+#!/bin/sh
+#
+# Send a message to all contacts in the roaster.
+#
+curl -X POST -d "$*" http://localhost:8001/broadcast &> /dev/null || echo error

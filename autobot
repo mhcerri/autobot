@@ -1,0 +1,340 @@
+#!/usr/bin/perl
+use strict;
+use utf8;
+use Data::Dumper;
+use File::Spec;
+use File::Basename;
+use Config::General qw(ParseConfig);
+use AnyEvent;
+use AnyEvent::Log;
+use AnyEvent::XMPP::IM::Connection;
+use AnyEvent::XMPP::IM::Message;
+use Twiggy::Server;
+use Dancer qw(:syntax);
+use EV;
+use ChildProcess;
+use FileUtils;
+
+###############################################################################
+# Initialization
+#
+
+my $PROG = 'autobot';
+
+# Default values
+my %defaults = (
+    jid             => undef,
+    password        => undef,
+    bind_address    => '127.0.0.1',
+    bind_port       => 8001,
+    cmd_dir         => './cmd/',
+    reconnect       => 3
+);
+my @config_files = ("./$PROG.conf", "/etc/$PROG.conf" );
+unshift @config_files, File::Spec->join($ENV{HOME}, "$PROG.conf") if defined $ENV{HOME};
+
+# Parse arguments
+while (@ARGV) {
+    my $arg = shift @ARGV;
+    if ($arg =~ /^(-h|--help)$/) {
+        print "Usage: \n";
+        print "    " . basename($0) . " [OPTIONS]\n";
+        print "Options: \n";
+        print "    -j, --jid <jid>\n";
+        print "    -p, --password <password>\n";
+        print "    -c, --config <file>\n";
+        exit(0);
+    }
+    if ($arg =~ /^(-j|--jid)$/) {
+        $defaults{jid} = shift @ARGV;
+    }
+    if ($arg =~ /^(-p|--password)$/) {
+        $defaults{password} = shift @ARGV;
+    }
+    if ($arg =~ /^(-c|--config)$/) {
+        unshift @config_files, shift @ARGV;
+    }
+    else {
+        print "Invalid argument: $arg\n";
+        exit(1);
+    }
+}
+
+# Set logging
+# TODO: file logging
+$AnyEvent::Log::FILTER->level('info');
+$AnyEvent::Log::LOG->fmt_cb(sub {
+    my ($time, $ctx, $lvl, $msg) = @_;
+    $msg =~ s/\n/\n+ /g;
+    sprintf "%s %s: %s\n", $AnyEvent::Log::LEVEL2STR[$lvl], $ctx->[0], $msg;
+});
+AE::log info => "Initializing";
+
+# Read config
+my %config;
+foreach my $config_file (@config_files) {
+    if (! -f $config_file) {
+        AE::log info => "Config file \"$config_file\" not found.";
+    } else {
+        AE::log info => "Using config file \"$config_file\".";
+        eval {
+            %config = ParseConfig(
+                -ConfigFile => $config_file,
+                -DefaultConfig => \%defaults,
+                -MergeDuplicateOptions => 1
+            );
+            1;
+        } or AE::log error => $!;
+        last;
+    }
+}
+if (!%config) {
+    %config = %defaults;
+} else {
+    my %sanatized_config = %config;
+    foreach my $key (qw(password)) {
+        if (defined $sanatized_config{$key}) {
+            $sanatized_config{$key} = '*****';
+        }
+    }
+    AE::log info => Data::Dumper->Dump([ \%sanatized_config ], [ qw(*config) ]);
+}
+
+# Check config
+foreach my $key (qw(jid password)) {
+    if (! defined $config{$key}) {
+        AE::log fatal => "No $key was given.";
+        exit(1);
+    }
+}
+
+###############################################################################
+# Main program:
+#
+AE::log info => "Starting...";
+my $exit = AnyEvent->condvar;
+
+# XMPP client
+my $xmpp_conn;
+my $reconnect_watcher;
+
+# Define a function to create the XMPP client to make possible
+# to recreate the client when reconnecting
+sub xmpp_connect () {
+    my $conn = AnyEvent::XMPP::IM::Connection->new(
+        jid => $config{jid},
+        password => $config{password},
+    );
+    $conn->reg_cb(
+        session_ready => sub {
+            my ($conn) = @_;
+            AE::log info => "Connected to \"" . $conn->{host}. "\" " .
+                            "(" . $conn->{peer_host} . ":" . $conn->{peer_port} . ")";
+
+            my @contacts;
+            my $roster = $xmpp_conn->get_roster;
+            foreach my $contact ($roster->get_contacts) {
+                push @contacts, $contact->jid;
+            }
+            AE::log info => "Contacts in roster: \n\t\t" . join("\n\t\t", @contacts);
+        },
+        message => sub {
+            my ($conn, $msg) = @_;
+
+            # Filter messages
+            return if (! -d $config{cmd_dir});
+            return if ($msg->type ne 'chat');
+            return if (! defined $msg->any_body);
+            my $roster = $xmpp_conn->get_roster;
+            my $contact = $roster->get_contact($msg->from);
+            if (! defined $contact || ! $contact->is_on_roster) {
+                AE::log warn => "Command from contact \"" . $msg->from
+                        . "\" that is not on roster: "
+                        . $msg->any_body;
+                return;
+            }
+
+            # Check if command is valid
+            AE::log info => "Command received: " . $msg->any_body;
+            my $repl = $msg->make_reply;
+            my $cmd = [ split(/\s/, $msg->any_body) ];
+            my $exepath = FileUtils::concat_filename($config{cmd_dir}, $cmd->[0]);
+            if (! defined $exepath || ! -x $exepath) {
+                my $err = "Invalid command \"" . $cmd->[0] . "\"";
+                AE::log error => $err;
+                $repl->add_body($err);
+                $repl->send;
+                return;
+            }
+
+            # Run command
+            $cmd->[0] = $exepath;
+            my $w = ChildProcess::run(
+                cmd => $cmd,
+                env => {
+                    FROM => $msg->from,
+                    TO => $msg->to,
+                },
+                cb => sub {
+                    my ($pid, $status, $out, $err) = @_;
+                    AE::log info => "Process $pid exited with rc $status";
+                    if ($out) {
+                        $repl->add_body($out);
+                        $repl->send;
+                    }
+                }
+            );
+            AE::log info => "Executing \"$exepath\" (pid " . $w->{pid} . ")";
+        },
+        error => sub {
+            my ($conn, $error) = @_;
+            my $type = eval { $error->xml_node->attr('type') } || '(undef)';
+            my $to   = eval { $error->xml_node->attr('to')   } || '(undef)';
+            my $from = eval { $error->xml_node->attr('from') } || '(undef)';
+            AE::log error => "Error: " . $error->string . "\n" .
+                "\t\ttype: $type\n" .
+                "\t\tto:   $to\n" .
+                "\t\tfrom: $from";
+        },
+        disconnect => sub {
+            my ($conn, $host, $port, $err) = @_;
+
+            # Log error message
+            $err = "none" if ! defined $err;
+            AE::log warn => "Disconnected: $err";
+
+            # Check if it should reconnect
+            if ($config{reconnect} < 0) {
+                AE::log info => "Exiting main loop";
+                $exit->broadcast;
+            } else {
+                # Schedule timer to reconnect
+                AE::log warn => "Reconnecting in " . $config{reconnect} . "s";
+                $reconnect_watcher = AnyEvent->timer(
+                    after => $config{reconnect},
+                    cb => sub {
+                        undef $reconnect_watcher;
+                        $xmpp_conn = xmpp_connect();
+                        $xmpp_conn->connect;
+                    });
+            }
+        },
+    );
+    return $conn;
+}
+$xmpp_conn = xmpp_connect();
+
+# HTTP services:
+set layout => undef;
+set serializer => 'Dumper';
+
+post '/send_to/:who' => sub {
+    my $who = param('who');
+
+    if (!$xmpp_conn->is_connected) {
+        my $err = "Not connected";
+        AE::log warn => $err;
+        status 503;
+        return $err;
+    }
+
+    my $data = params->{msg} || request->body;
+    my $roster = $xmpp_conn->get_roster;
+    my $contact = $roster->get_contact($who);
+    if (! defined $contact || ! $contact->is_on_roster) {
+        my $err = "Contact \"" . $contact->jid . "\" not on roster";
+        AE::log warn => $err;
+        status 503;
+        return $err;
+    }
+
+    my @to;
+    foreach my $p ($contact->get_presences) {
+        push @to, $p->jid;
+        AnyEvent::XMPP::IM::Message->new(
+            to   => $p->jid,
+            body => $data,
+        )->send($xmpp_conn);
+    }
+    if (! @to) {
+        my $err = "No recipients";
+        AE::log warn => $err;
+        status 503;
+        return $err;
+    }
+    AE::log info => "Message sent to: " . join(', ', @to);
+    undef
+};
+
+post '/broadcast' => sub {
+    if (!$xmpp_conn->is_connected) {
+        my $err = "Not connected";
+        AE::log warn => $err;
+        status 503;
+        return $err;
+    }
+
+    my @to;
+    my $data = params->{msg} || request->body;
+    my $roster = $xmpp_conn->get_roster;
+    foreach my $contact ($roster->get_contacts) {
+        my @presences = $contact->get_presences;
+        if (! @presences) {
+            push @to, $contact->jid;
+        } else {
+            foreach my $presence (@presences) {
+                push @to, $presence->jid;
+            }
+        }
+    }
+    if (! @to) {
+        my $err = "No recipients";
+        AE::log warn => $err;
+        status 503;
+        return $err;
+    }
+    foreach my $jid (@to) {
+            AnyEvent::XMPP::IM::Message->new(
+                to   => $jid,
+                body => $data,
+            )->send($xmpp_conn);
+    }
+    AE::log info => "Message sent to: " . join(', ', @to);
+    undef
+};
+
+get '/is_connected' => sub { $xmpp_conn->is_connected or 0 };
+
+# Default route
+any qr{.*} => sub {
+    AE::log warn => "Invalid " . request->method . " request to URI: " . request->uri;
+    status 'not_found';
+    undef;
+};
+
+# Handle errors during a request
+hook on_route_exception => sub {
+    my ($exception) = @_;
+    AE::log error => "Request error: " . $exception;
+    status 'error';
+    halt $exception;
+};
+
+# Log requests
+hook before => sub {
+    my ($route) = @_;
+    AE::log info => request->method . " request to " . request->path;
+};
+
+my $http_server = Twiggy::Server->new(
+    host => $config{bind_address},
+    port => $config{bind_port},
+);
+$http_server->register_service(sub {
+    my $req = Dancer::Request->new(env => shift);
+    return Dancer::Handler->handle_request($req);
+});
+
+# Main loop
+$xmpp_conn->connect;
+$exit->wait;

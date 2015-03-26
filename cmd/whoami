@@ -1,0 +1,5 @@
+#!/bin/sh
+#
+# Reply with the senders JID.
+#
+echo "$FROM"

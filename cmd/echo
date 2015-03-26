@@ -1,0 +1,5 @@
+#!/bin/sh
+#
+# Send back the same message.
+#
+echo "$@"

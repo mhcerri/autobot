@@ -1,0 +1,5 @@
+#!/bin/sh
+#
+# Reply with the public ip.
+#
+curl -s 'http://wtfismyip.com/text' 2>&1 || echo error

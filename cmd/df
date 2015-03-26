@@ -1,0 +1,5 @@
+#!/bin/sh
+#
+# Display disk usage.
+#
+df -h | awk '{ print $2, $5, $6; }'

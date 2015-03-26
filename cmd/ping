@@ -1,0 +1,5 @@
+#!/bin/sh
+#
+# Ping a host.
+#
+ping -c 1 "$*" 2>/dev/null || echo error
