@@ -48,7 +48,7 @@ The recognized configurations are:
 
 - `cmd_dir`: the directory where the executables commands are located at (default: `./cmd/`).
 
-- `reconnect`: number of connection retries before aborting (default: `3`).
+- `reconnect`: amount of time in seconds between reconnection tries (default: `3`). A negative value means no reconnection.
 
 Example:
 
