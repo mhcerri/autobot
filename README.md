@@ -22,7 +22,7 @@ Usage
 Configuration file
 ---
 
-The application search for a configuration file in the following order:
+The application searches for a configuration file in the following order:
 
 1. The file specified via the `--config` argument.
 
