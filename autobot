@@ -28,7 +28,7 @@ my %defaults = (
     bind_address    => '127.0.0.1',
     bind_port       => 8001,
     cmd_dir         => './cmd/',
-    reconnect       => 3
+    reconnect_time  => 3
 );
 my @config_files = ("./$PROG.conf", "/etc/$PROG.conf" );
 unshift @config_files, File::Spec->join($ENV{HOME}, "$PROG.conf") if defined $ENV{HOME};
@@ -204,14 +204,14 @@ sub xmpp_connect () {
             AE::log warn => "Disconnected: $err";
 
             # Check if it should reconnect
-            if ($config{reconnect} < 0) {
+            if ($config{reconnect_time} < 0) {
                 AE::log info => "Exiting main loop";
                 $exit->broadcast;
             } else {
                 # Schedule timer to reconnect
-                AE::log warn => "Reconnecting in " . $config{reconnect} . "s";
+                AE::log warn => "Reconnecting in " . $config{reconnect_time} . "s";
                 $reconnect_watcher = AnyEvent->timer(
-                    after => $config{reconnect},
+                    after => $config{reconnect_time},
                     cb => sub {
                         undef $reconnect_watcher;
                         $xmpp_conn = xmpp_connect();

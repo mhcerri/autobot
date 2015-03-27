@@ -48,7 +48,7 @@ The recognized configurations are:
 
 - `cmd_dir`: the directory where the executables commands are located at (default: `./cmd/`).
 
-- `reconnect`: amount of time in seconds between reconnection tries (default: `3`). A negative value means no reconnection.
+- `reconnect_time`: amount of time in seconds between reconnection tries (default: `3`). A negative value means no reconnection.
 
 Example:
 
@@ -60,7 +60,7 @@ Example:
     #bind_address = 127.0.0.1
     #bind_port = 8001
     #cmd_dir = ./cmd/
-    #reconnect = 3
+    #reconnect_time = 3
 
 HTTP service
 ---
@@ -155,7 +155,7 @@ The following steps can be used to install `autobot` as a service in Arch Linux.
         #bind_address = 127.0.0.1
         #bind_port = 8001
         #cmd_dir = ./cmd/
-        #reconnect = 3
+        #reconnect_time = 3
 
 11. Change autobot.conf permissions
 
