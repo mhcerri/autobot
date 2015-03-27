@@ -11,7 +11,7 @@ sub run {
     my $cmd = $args{cmd} || die "missing cmd";
     my $env = $args{env} || {};
     my $cb = $args{cb};
-    my $bytes_per_read = $args{bytes_per_read} || 32;
+    my $bytes_per_read = $args{bytes_per_read} || 1024;
     my $timeout = $args{timeout} || 10;
 
     # Create pipes for stdin, stdout and stderr
@@ -56,7 +56,7 @@ sub run {
         my $read_data = sub {
             while (1) {
                 my $chunk;
-                my $rc = sysread $fh, $chunk, 16;
+                my $rc = sysread $fh, $chunk, $bytes_per_read;
                 if (!defined $rc) {
                     if (! $!{EAGAIN}) {
                         # That's a real error:
