@@ -105,37 +105,39 @@ The following steps can be used to install `autobot` as a service in Arch Linux.
 
 1. Make sure that `perl`, `gcc`, `cpan` and `local::lib` are installed in the system.
 
-2. Create the destination directory:
+2. Create the destination directory and copy files:
 
+        git clone 'https://github.com/mhcerri/autobot.git' /opt/autobot
+
+        # Or:
+
+        wget 'https://github.com/mhcerri/autobot/archive/master.zip'
         mkdir /opt/autobot
+        unzip ./master.zip -d /opt/autobot
 
 3. Create an user for autobot:
 
         useradd -d /opt/autobot -s /bin/nologin -U autobot
 
-4. Copy files to the destination directory:
-
-        tar xvf ./autobot.tar.gz -C /opt/autobot
-
-5. Change ownership:
+4. Change ownership:
 
         chown -R autobot:autobot /opt/autobot
 
-6. Start a shell as the new user:
+5. Start a shell as the new user:
 
         su - autobot -s /bin/sh
 
-7. Create local library directory:
+6. Create local library directory:
 
         cd /opt/autobot
         mkdir perl
 
-8. Set the environment to point to the local library directory:
+7. Set the environment to point to the local library directory:
 
         perl -Mlocal::lib=./perl/ # Check the variables values
         eval $(perl -Mlocal::lib=./perl/)
 
-9. Install perl dependencies from CPAN:
+8. Install perl dependencies from CPAN:
 
         cpan install AnyEvent
         cpan install AnyEvent::Log
@@ -145,7 +147,7 @@ The following steps can be used to install `autobot` as a service in Arch Linux.
         cpan install Dancer
         cpan install EV
 
-10. Configure the file autobot.conf as the following:
+9. Configure the file autobot.conf as the following:
 
         # Mandatory configuration:
         jid = your.user@xmpp.server.com
@@ -157,15 +159,15 @@ The following steps can be used to install `autobot` as a service in Arch Linux.
         #cmd_dir = ./cmd/
         #reconnect_time = 3
 
-11. Change autobot.conf permissions
+10. Change autobot.conf permissions
 
         chmod 600 autobot.conf
 
-12. Logout
+11. Logout
 
         exit
 
-13. Create a systemd service file in /etc/systemd/system/autobot.service:
+12. Create a systemd service file in /etc/systemd/system/autobot.service:
 
         [Unit]
         Description=AutoBot
@@ -183,13 +185,13 @@ The following steps can be used to install `autobot` as a service in Arch Linux.
         [Install]
         WantedBy=multi-user.target
 
-14. Enable service:
+13. Enable service:
 
         systemctl daemon-reload
         systemctl enable autobot.service
         systemctl start autobot.service
 
-15. Check the service:
+14. Check the service:
 
         journalctl -u autobot.service -e
 
