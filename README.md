@@ -77,7 +77,7 @@ The bot responds to the following requests:
 
 - `POST /broadcast`
 
-    Send a message to all contacts in its roaster.
+    Send a message to all contacts in its roster.
 
 Dependencies
 ---
