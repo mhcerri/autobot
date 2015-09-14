@@ -45,13 +45,13 @@ while (@ARGV) {
         print "    -c, --config <file>\n";
         exit(0);
     }
-    if ($arg =~ /^(-j|--jid)$/) {
+    elsif ($arg =~ /^(-j|--jid)$/) {
         $defaults{jid} = shift @ARGV;
     }
-    if ($arg =~ /^(-p|--password)$/) {
+    elsif ($arg =~ /^(-p|--password)$/) {
         $defaults{password} = shift @ARGV;
     }
-    if ($arg =~ /^(-c|--config)$/) {
+    elsif ($arg =~ /^(-c|--config)$/) {
         unshift @config_files, shift @ARGV;
     }
     else {
