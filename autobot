@@ -9,6 +9,7 @@ use AnyEvent;
 use AnyEvent::Log;
 use AnyEvent::XMPP::IM::Connection;
 use AnyEvent::XMPP::IM::Message;
+use Protocol::OTR qw(:constants);
 use Twiggy::Server;
 use Dancer qw(:syntax);
 use EV;
@@ -123,6 +124,38 @@ my $exit = AnyEvent->condvar;
 my $xmpp_conn;
 my $reconnect_watcher;
 
+# OTR
+my $otr = Protocol::OTR->new()->account($config{jid}, 'prpl-jabber');
+
+sub get_channel ($;$) {
+	my ($jid, $output_ref) = @_;
+	my $contact = $otr->contact($jid);
+	return $contact->channel(
+		policy  => POLICY_ALWAYS,
+		on_read => sub {
+			my ($c, $clear) = @_;
+			if (defined $output_ref) {
+				$$output_ref = $clear;
+			}
+		},
+		on_write => sub {
+			my ($c, $cipher) = @_;
+			AnyEvent::XMPP::IM::Message->new(
+				to   => $jid,
+				body => $cipher,
+			)->send($xmpp_conn);
+		},
+		on_is_contact_logged_in => sub {
+			return 1;
+		},
+		on_smp                  => sub {
+			my ($c, $q) = @_;
+			$c->smp_respond(scalar reverse $q);
+			AE::log warn => "SMP response sent.";
+		}
+	);
+}
+
 # Define a function to create the XMPP client to make possible
 # to recreate the client when reconnecting
 sub xmpp_connect () {
@@ -163,17 +196,25 @@ sub xmpp_connect () {
 				return;
 			}
 
+			my $any_body;
+			my $channel  = get_channel($msg->from, \$any_body);
+			if (!$channel->read($msg->any_body) or !defined $any_body) {
+				# Ignore OTR negotiation
+				if ($msg->any_body !~ /^\?OTR/) {
+					AE::log warn => "Invalid OTR message: " . $msg->any_body;
+				}
+				return
+			}
+
 			# Check if command is valid
-			AE::log info => "Command received: " . $msg->any_body;
-			my $repl = $msg->make_reply;
-			my $cmd = [ split(/\s/, $msg->any_body) ];
+			AE::log info => "Command received: " . $any_body;
+			my $cmd = [ split(/\s/, $any_body) ];
 			my $exepath =
 			  FileUtils::concat_filename($config{cmd_dir}, $cmd->[0]);
 			if (!defined $exepath || !-x $exepath) {
 				my $err = "Invalid command \"" . $cmd->[0] . "\"";
 				AE::log error => $err;
-				$repl->add_body($err);
-				$repl->send;
+				$channel->write($err);
 				return;
 			}
 
@@ -189,8 +230,7 @@ sub xmpp_connect () {
 					my ($pid, $status, $out, $err) = @_;
 					AE::log info => "Process $pid exited with rc $status";
 					if ($out) {
-						$repl->add_body($out);
-						$repl->send;
+						$channel->write($out);
 					}
 				}
 			);
@@ -265,10 +305,7 @@ post '/send_to/:who' => sub {
 	my @to;
 	foreach my $p ($contact->get_presences) {
 		push @to, $p->jid;
-		AnyEvent::XMPP::IM::Message->new(
-			to   => $p->jid,
-			body => $data,
-		)->send($xmpp_conn);
+		get_channel($p->jid)->write($data);
 	}
 	if (!@to) {
 		my $err = "No recipients";
@@ -302,6 +339,9 @@ post '/broadcast' => sub {
 			}
 		}
 	}
+	if (!$data) {
+		$data = '<empty>';
+	}
 	if (!@to) {
 		my $err = "No recipients";
 		AE::log warn => $err;
@@ -309,10 +349,7 @@ post '/broadcast' => sub {
 		return $err;
 	}
 	foreach my $jid (@to) {
-		AnyEvent::XMPP::IM::Message->new(
-			to   => $jid,
-			body => $data,
-		)->send($xmpp_conn);
+		get_channel($jid)->write($data);
 	}
 	AE::log info => "Message sent to: " . join(', ', @to);
 	undef;
